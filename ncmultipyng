@@ -142,17 +142,40 @@ class Host:
 #######################################################################
 
 class Arguments:
-	def parse_host(self, string):
-		return Host(string)
+
+	def range_integer(self, parser, string, name, mini=None, maxi=None):
+		value = int(string)
+		if mini is not None and value < mini:
+			parser.error(
+				"%s=%s is below the minimum value of %i"
+				% (name, string, mini)
+			)
+		if maxi is not None and value > maxi:
+			parser.error(
+				"%s=%s is above the maximum value of %i"
+				% (name, string, maxi)
+			)
+		return value
 
 	def __init__(self):
 		parser = argparse.ArgumentParser()
 		parser.add_argument(
 			"host",
-			help = "target host definition",
+			help = "target host definition (IPv4/IPv6)",
 			action = "append",
 			nargs = "+",
-			type = self.parse_host
+			type = lambda x: Host(x)
+		)
+		parser.add_argument(
+			"-i",
+			help = "polling interval in seconds",
+			action = "store",
+			default = 3,
+			type = lambda x:
+				self.range_integer(
+					parser, x,
+					"interval", 1, None
+				)
 		)
 		self.data = parser.parse_args()
 

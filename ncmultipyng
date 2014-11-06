@@ -1,31 +1,173 @@
-#! /usr/bin/python
+#! /usr/bin/python2
+
+#######################################################################
+# This file is part of ncmultipyng
+#
+# Copyright (C) 2014 Nicolas Pillot
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#######################################################################
 
 import argparse
+import re
 
+#######################################################################
+# Target host
+#######################################################################
+
+# host class to store target information
 class Host:
+
+	# ipv4 and ipv6 regexp courtesy of
+	# http://www.sroze.io/2008/10/09/regex-ipv4-et-ipv6/
+	_pattern_ipv4 = (
+		"("
+			"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\."
+			"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\."
+			"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\."
+			"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+		")"
+	)
+	_pattern_ipv6 = (
+		"("
+			"("
+				"([0-9A-Fa-f]{1,4}:){7}"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){6}"
+				":"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){5}"
+				":"
+				"([0-9A-Fa-f]{1,4}:)?"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){4}"
+				":"
+				"([0-9A-Fa-f]{1,4}:){0,2}"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){3}"
+				":"
+				"([0-9A-Fa-f]{1,4}:){0,3}"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){2}"
+				":"
+				"([0-9A-Fa-f]{1,4}:){0,4}"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){6}"
+				"((b((25[0-5])|(1d{2})|(2[0-4]d)|(d{1,2}))b).){3}"
+				"(b((25[0-5])|(1d{2})|(2[0-4]d)|(d{1,2}))b)"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){0,5}:"
+				"((b((25[0-5])|(1d{2})|(2[0-4]d)|(d{1,2}))b).){3}"
+				"(b((25[0-5])|(1d{2})|(2[0-4]d)|(d{1,2}))b)"
+			")|"
+			"("
+				"::"
+				"([0-9A-Fa-f]{1,4}:){0,5}"
+				"((b((25[0-5])|(1d{2})|(2[0-4]d)|(d{1,2}))b).){3}"
+				"(b((25[0-5])|(1d{2})|(2[0-4]d)|(d{1,2}))b)"
+			")|"
+			"("
+				"[0-9A-Fa-f]{1,4}"
+				"::"
+				"([0-9A-Fa-f]{1,4}:){0,5}"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"::"
+				"([0-9A-Fa-f]{1,4}:){0,6}"
+				"[0-9A-Fa-f]{1,4}"
+			")|"
+			"("
+				"([0-9A-Fa-f]{1,4}:){1,7}"
+				":"
+			")"
+		")"
+	)
+	_re_ipv4 = re.compile(_pattern_ipv4 + "$")
+	_re_ipv6 = re.compile(_pattern_ipv6 + "$", re.IGNORECASE)
+
+	# constructor
 	def __init__(self, string):
 		self.address = None
 		self.version = None
-	def __str__(self):
-		return "Host{ address=%s version=%s }" % (self.address, self.version )
+		self._parse_ip(string)
+
+
+	# print
 	def __repr__(self):
-		return self.__str__()
+		return "Host(address=%s,version=%s)" % (self.address, self.version)
 
-def host_parse(string):
-	return Host(string)
+	# parse ip
+	def _parse_ip(self, string):
+		result = self._re_ipv4.match(string)
+		if result is not None:
+			self.version = 4
+			self.address = result.group()
+			return
+		result = self._re_ipv6.match(string)
+		if result is not None:
+			self.version = 6
+			self.address = result.group()
+			return
+		message = "%s is not a valid host definition" % string
+		raise argparse.ArgumentTypeError(message)
 
-def initialize_from_arguments():
-	parser = argparse.ArgumentParser()
-	parser.add_argument("host",
-			help="target host definition",
-			action="append",
-			nargs="+",
-			type=host_parse)
-	args = parser.parse_args()
-	print args.host
+#######################################################################
+# Command line arguments
+#######################################################################
 
-def main():
-	initialize_from_arguments()
+class Arguments:
+	def parse_host(self, string):
+		return Host(string)
 
-main()
+	def __init__(self):
+		parser = argparse.ArgumentParser()
+		parser.add_argument(
+			"host",
+			help = "target host definition",
+			action = "append",
+			nargs = "+",
+			type = self.parse_host
+		)
+		self.data = parser.parse_args()
+
+	# print
+	def __repr__(self):
+		return "Arguments=%s" % self.data
+
+#######################################################################       
+# Main application
+#######################################################################
+
+class Application:
+	def __init__(self):
+		self.arguments = Arguments()
+		print self.arguments
+
+app = Application()
 

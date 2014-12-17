@@ -22,6 +22,9 @@
 
 import argparse
 import re
+import subprocess
+import time
+import os
 
 #######################################################################
 # Target host
@@ -115,8 +118,8 @@ class Host:
 	def __init__(self, string):
 		self.address = None
 		self.version = None
+		self.process = None
 		self._parse_ip(string)
-
 
 	# print
 	def __repr__(self):
@@ -136,6 +139,37 @@ class Host:
 			return
 		message = "%s is not a valid host definition" % string
 		raise argparse.ArgumentTypeError(message)
+
+	# finished process
+	def finished(self,retcode):
+		print "%s returned  %s" % (self.address, retcode)
+
+	# spawn process
+	def spawn(self,args):
+
+		if self.process is not None:
+			retcode = self.process.poll()
+			if retcode is None:
+				return
+			self.finished(retcode)
+			self.process = None
+
+		if self.version == 6:
+			cmd = "ping6"
+		else:
+			cmd = "ping"
+		timeout = args.i - 1
+		if timeout <= 0:
+			timeout = 1
+		params = [
+			cmd,
+			"-q", "-n",
+			"-W", str(timeout),
+			"-c", "1",
+			self.address
+		]
+		with open(os.devnull, "w") as f:
+			self.process = subprocess.Popen(params,stdout=f,stderr=f)
 
 #######################################################################
 # Command line arguments
@@ -162,7 +196,7 @@ class Arguments:
 		parser.add_argument(
 			"host",
 			help = "target host definition (IPv4/IPv6)",
-			action = "append",
+			action = "store",
 			nargs = "+",
 			type = lambda x: Host(x)
 		)
@@ -184,13 +218,43 @@ class Arguments:
 		return "Arguments=%s" % self.data
 
 #######################################################################       
-# Main application
+# Application
 #######################################################################
 
 class Application:
+
+	# constructor
 	def __init__(self):
+
+		# analyze and parse arguments
 		self.arguments = Arguments()
 		print self.arguments
 
-app = Application()
+		# move around data references
+		self.hosts = self.arguments.data.host
+		del self.arguments.data.host
 
+	# ping all addresses
+	def pingall(self):
+		for host in self.hosts:
+			host.spawn(self.arguments.data)
+
+	# sleep for the interval
+	def sleep(self):
+		time.sleep(self.arguments.data.i)
+
+	# main loop
+	def run(self):
+		while True:
+			self.pingall()
+			self.sleep()
+
+#######################################################################
+# main
+#######################################################################
+
+app = Application()
+try:
+	app.run()
+except (KeyboardInterrupt, SystemExit):
+	pass

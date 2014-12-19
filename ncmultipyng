@@ -25,6 +25,7 @@ import re
 import subprocess
 import time
 import os
+import array
 
 #######################################################################
 # Target host
@@ -119,6 +120,7 @@ class Host:
 		self.address = None
 		self.version = None
 		self.process = None
+		self.results = array.array('c')
 		self._parse_ip(string)
 
 	# print
@@ -141,8 +143,15 @@ class Host:
 		raise argparse.ArgumentTypeError(message)
 
 	# finished process
-	def finished(self,retcode):
-		print "%s returned  %s" % (self.address, retcode)
+	def finished(self,retcode,args):
+		if retcode == 0: # success
+			self.results.append('|');
+		else:
+			self.results.append('.');
+		# this is a default value until we get a UI
+		if len(self.results) > (2 * args.n):
+			self.results.pop(0)
+		print "%s : %s" % (self.address, self.results.tostring())
 
 	# spawn process
 	def spawn(self,args):
@@ -151,7 +160,7 @@ class Host:
 			retcode = self.process.poll()
 			if retcode is None:
 				return
-			self.finished(retcode)
+			self.finished(retcode,args)
 			self.process = None
 
 		if self.version == 6:
@@ -208,7 +217,18 @@ class Arguments:
 			type = lambda x:
 				self.range_integer(
 					parser, x,
-					"interval", 1, None
+					"-i interval", 1, None
+				)
+		)
+		parser.add_argument(
+			"-n",
+			help = "minimum number of samples to display",
+			action = "store",
+			default = 5,
+			type = lambda x:
+				self.range_integer(
+					parser, x,
+					"-n numsamples", 1, None
 				)
 		)
 		self.data = parser.parse_args()

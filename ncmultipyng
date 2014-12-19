@@ -152,6 +152,11 @@ class Host:
 		else:
 			self.results.append('.');
 
+	# contrain storage size
+	def clip(self,amount):
+		while len(self.results) > amount:
+			self.results.pop(0)
+
 	# spawn process
 	def spawn(self, timeout):
 
@@ -263,9 +268,22 @@ class Interface:
 	# constructor
 	def __init__(self, win, args):
 		self.stdscr = win
+		self.program_name = os.path.basename(__file__)
 		self.interval_ui = args.r
 		self.stdscr.nodelay(True)
 		curses.curs_set(False)
+		curses.use_default_colors()
+		self.setup_colors()
+
+	# initialize our colors
+	def setup_colors(self):
+		# avail: black, red, green, yellow, blue, magenta, cyan, white
+		curses.init_pair(1,curses.COLOR_YELLOW, -1)
+		self.style_first_letter = curses.color_pair(1)
+		curses.init_pair(2, -1, curses.COLOR_RED)
+		self.style_ping_failed = curses.color_pair(2)
+		curses.init_pair(3, -1, curses.COLOR_GREEN)
+		self.style_ping_success = curses.color_pair(3)
 
 	# handle input
 	def handleinput(self):
@@ -276,40 +294,44 @@ class Interface:
 			sys.exit(0)
 
 	# decoration
-	def decoration(self):
+	def decoration(self, h, w):
 		self.stdscr.box()
+		self.stdscr.move(0,1)
+		self.stdscr.addstr(self.program_name, curses.A_BOLD)
+		self.stdscr.move(h-1,1)
+		self.stdscr.addstr("q", self.style_first_letter | curses.A_BOLD)
+		self.stdscr.addstr("uit")
+		winsize = "%s,%s" % (h, w)
+		self.stdscr.addstr(h-1, w-len(winsize)-1, winsize)
 
-	# display screen
-	def display(self):
-		self.stdscr.addstr(0,0, str(self.stdscr.getmaxyx())
-			+ " " + str(curses.COLOR_PAIRS)
-			+ " " + str(curses.COLORS)
-		)
-		self.stdscr.move(1,1)
-		for i in xrange(1, curses.COLOR_PAIRS):
-			txt = str(i)
-			if i < 10:
-				txt = "0" + txt
-			self.stdscr.addstr(txt + " ")
-			self.stdscr.addstr(txt + " ", curses.color_pair(i))
-		self.stdscr.addstr( 4,1,"NORMAL")
-		self.stdscr.addstr( 5,1,"BLINK",curses.A_BLINK)
-		self.stdscr.addstr( 6,1,"BOLD",curses.A_BOLD)
-		self.stdscr.addstr( 7,1,"DIM",curses.A_DIM)
-		self.stdscr.addstr( 8,1,"REVERSE",curses.A_REVERSE)
-		self.stdscr.addstr( 9,1,"STANDOUT",curses.A_STANDOUT)
-		self.stdscr.addstr(10,1,"UNDERLINE",curses.A_UNDERLINE)
+	# display screen with one host per line
+	def display_linear(self, h, w, hosts):
+		line = 1
+		for host in hosts:
+			if line == h - 1:
+				break
+			self.stdscr.move(line,1)
+			self.stdscr.addstr(host.address)
+			cy, cx = self.stdscr.getyx()
+			room = w - cx - 2
+			host.clip(room)
+			num = len(host.results)
+			skip = room - num
+			self.stdscr.addstr("line=%s w=%s cx=%s room=%s num=%s skip=%s"
+					% (line,w,cx,room,num,skip))
+			line = line + 1
 
 	# sleep for a while
 	def sleep(self):
 		curses.napms(self.interval_ui)
 
 	# interface cycle
-	def update(self):
+	def update(self, hosts):
+		h, w = self.stdscr.getmaxyx()
 		self.handleinput()
 		self.stdscr.erase()
-		self.decoration()
-		self.display()
+		self.decoration(h,w)
+		self.display_linear(h, w, hosts)
 		self.stdscr.refresh()
 		self.sleep()
 
@@ -334,7 +356,7 @@ class Application:
 	def run(self):
 		while True:
 			self.pingall()
-			self.interface.update()
+			self.interface.update(self.hosts)
 
 #######################################################################
 # main

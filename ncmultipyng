@@ -25,7 +25,7 @@ import re
 import subprocess
 import time
 import os
-import array
+import collections
 import curses
 import sys
 
@@ -35,6 +35,9 @@ import sys
 
 # host class to store target information
 class Host:
+
+	# only last MAX_SAMPLES are kept
+	_MAX_SAMPLES = 200
 
 	# ipv4 and ipv6 regexp courtesy of
 	# http://www.sroze.io/2008/10/09/regex-ipv4-et-ipv6/
@@ -121,9 +124,9 @@ class Host:
 	def __init__(self, string):
 		self.address = None
 		self.version = None
-		self.process = None
-		self.nextpoll = None
-		self.results = array.array('c')
+		self.results = collections.deque()
+		self._process = None
+		self._nextpoll = None
 		self._parse_ip(string)
 
 	# print
@@ -145,36 +148,29 @@ class Host:
 		message = "%s is not a valid host definition" % string
 		raise argparse.ArgumentTypeError(message)
 
-	# finished process
-	def finished(self,retcode,args):
-		if retcode == 0: # success
-			self.results.append('|');
+	# return code
+	def _get_return_code(self):
+		if self._process is None:
+			return None
 		else:
-			self.results.append('.');
+			return self._process.poll()
 
-	# contrain storage size
-	def clip(self,amount):
-		while len(self.results) > amount:
-			self.results.pop(0)
+	# check polling interval
+	def _is_ready(self, timeout):
+		curtime = time.time()
+		if self._nextpoll is not None and curtime < self._nextpoll:
+			return False
+		self._nextpoll = curtime + timeout
+		return True
+
+	# store result
+	def _store_sample(self, retcode):
+		self.results.appendleft(retcode);
+		while len(self.results) > Host._MAX_SAMPLES:
+			self.results.pop()
 
 	# spawn process
-	def spawn(self, timeout):
-
-		# check result of running or already finished child
-		if self.process is not None:
-			retcode = self.process.poll()
-			if retcode is None:
-				return
-			self.finished(retcode,args)
-			self.process = None
-
-		# check time interval before respawning
-		curtime = time.time()
-		if self.nextpoll is not None and curtime < self.nextpoll:
-			return
-		self.nextpoll = curtime + timeout
-
-		# spawn a child process
+	def _spawn_process(self, timeout):
 		if self.version == 6:
 			cmd = "ping6"
 		else:
@@ -189,7 +185,41 @@ class Host:
 			self.address
 		]
 		with open(os.devnull, "w") as f:
-			self.process = subprocess.Popen(params,stdout=f,stderr=f)
+			self._process = subprocess.Popen(params,stdout=f,stderr=f)
+
+	# run
+	def run(self, timeout):
+		retcode = self._get_return_code()
+		# it just finished, clear and store
+		if retcode is not None:
+			self._process = None
+			self._store_sample(retcode)
+		# spawn if not running and interval passed
+		if self._process is None and self._is_ready(timeout):
+			self._spawn_process(timeout)
+
+	# get minimum size
+	def _get_minimum_display_size(self):
+		return len(self.address) + 1 + Host.show_min_num_sample
+
+	# display host, constraining to w chars
+	def display(self, win, w):
+		# if not enough space, draw placeholder
+		if w < self._get_minimum_display_size():
+				win.addstr("x" * w)
+				return
+		# see how much room we have for samples
+		room = w - len(self.address) - 1
+		win.addstr(self.address)
+		win.addstr(" ")
+		for result in self.results:
+			if result == 0:
+				win.addstr("!", Interface.style_ping_success)
+			else:
+				win.addstr(".", Interface.style_ping_failed)
+			room -= 1
+			if room == 0:
+				break;
 
 #######################################################################
 # Command line arguments
@@ -253,11 +283,11 @@ class Arguments:
 					"-r refresh_delay_in_ms", 0, None
 				)
 		)
-		self.data = parser.parse_args()
+		self._data = parser.parse_args()
 
 	# print
 	def __repr__(self):
-		return "Arguments=%s" % self.data
+		return "Arguments=%s" % self._data
 
 #######################################################################       
 # Interface
@@ -267,73 +297,70 @@ class Interface:
 
 	# constructor
 	def __init__(self, win, args):
-		self.stdscr = win
-		self.program_name = os.path.basename(__file__)
-		self.interval_ui = args.r
-		self.stdscr.nodelay(True)
+		# display configuration
+		self._stdscr = win
+		self._stdscr.nodelay(True)
 		curses.curs_set(False)
 		curses.use_default_colors()
-		self.setup_colors()
+		# display colors
+		self._setup_colors()
+		# display variable
+		self._program_name = os.path.basename(__file__)
 
 	# initialize our colors
-	def setup_colors(self):
-		# avail: black, red, green, yellow, blue, magenta, cyan, white
+	def _setup_colors(self):
+		# hotkey indicator
 		curses.init_pair(1,curses.COLOR_YELLOW, -1)
-		self.style_first_letter = curses.color_pair(1)
+		Interface.style_first_letter = curses.color_pair(1)
+		# failed ping
 		curses.init_pair(2, -1, curses.COLOR_RED)
-		self.style_ping_failed = curses.color_pair(2)
+		Interface.style_ping_failed = curses.color_pair(2)
+		# success ping
 		curses.init_pair(3, -1, curses.COLOR_GREEN)
-		self.style_ping_success = curses.color_pair(3)
+		Interface.style_ping_success = curses.color_pair(3)
 
 	# handle input
-	def handleinput(self):
-		key = self.stdscr.getch()
+	def _handle_input(self):
+		key = self._stdscr.getch()
 		if key == curses.ERR:
 			pass
 		elif key == ord('q'):
 			sys.exit(0)
 
 	# decoration
-	def decoration(self, h, w):
-		self.stdscr.box()
-		self.stdscr.move(0,1)
-		self.stdscr.addstr(self.program_name, curses.A_BOLD)
-		self.stdscr.move(h-1,1)
-		self.stdscr.addstr("q", self.style_first_letter | curses.A_BOLD)
-		self.stdscr.addstr("uit")
+	def _draw_decoration(self, h, w):
+		self._stdscr.box()
+		self._stdscr.move(0,1)
+		self._stdscr.addstr(self._program_name, curses.A_BOLD)
+		self._stdscr.move(h-1,1)
+		self._stdscr.addstr("q", Interface.style_first_letter | curses.A_BOLD)
+		self._stdscr.addstr("uit")
 		winsize = "%s,%s" % (h, w)
-		self.stdscr.addstr(h-1, w-len(winsize)-1, winsize)
+		self._stdscr.addstr(h-1, w-len(winsize)-1, winsize)
 
 	# display screen with one host per line
-	def display_linear(self, h, w, hosts):
+	def _display_linear(self, h, w, hosts):
 		line = 1
 		for host in hosts:
 			if line == h - 1:
 				break
-			self.stdscr.move(line,1)
-			self.stdscr.addstr(host.address)
-			cy, cx = self.stdscr.getyx()
-			room = w - cx - 2
-			host.clip(room)
-			num = len(host.results)
-			skip = room - num
-			self.stdscr.addstr("line=%s w=%s cx=%s room=%s num=%s skip=%s"
-					% (line,w,cx,room,num,skip))
+			self._stdscr.move(line,1)
+			host.display(self._stdscr, w - 2)
 			line = line + 1
 
 	# sleep for a while
-	def sleep(self):
+	def _sleep(self):
 		curses.napms(self.interval_ui)
 
 	# interface cycle
 	def update(self, hosts):
-		h, w = self.stdscr.getmaxyx()
-		self.handleinput()
-		self.stdscr.erase()
-		self.decoration(h,w)
-		self.display_linear(h, w, hosts)
-		self.stdscr.refresh()
-		self.sleep()
+		h, w = self._stdscr.getmaxyx()
+		self._handle_input()
+		self._stdscr.clear()
+		self._draw_decoration(h,w)
+		self._display_linear(h, w, hosts)
+		self._stdscr.refresh()
+		self._sleep()
 
 #######################################################################
 # Application
@@ -343,27 +370,27 @@ class Application:
 
 	# constructor
 	def __init__(self, win, args):
-		self.hosts = args.host
-		self.interval_ping = args.i
-		self.interface = Interface(win, args)
-
-	# ping all addresses
-	def pingall(self):
-		for host in self.hosts:
-			host.spawn(self.interval_ping)
+		# variables
+		self._hosts = args.host
+		self._interface = Interface(win, args)
+		# parameters
+		Application.interval_ping = args.i
+		Interface.interval_ui = args.r
+		Host.show_min_num_sample = args.n
 
 	# main loop
 	def run(self):
 		while True:
-			self.pingall()
-			self.interface.update(self.hosts)
+			for host in self._hosts:
+				host.run(Application.interval_ping)
+			self._interface.update(self._hosts)
 
 #######################################################################
 # main
 #######################################################################
 
 def main(win, args):
-	app = Application(win, args.data)
+	app = Application(win, args._data)
 	app.run()
 
 try:

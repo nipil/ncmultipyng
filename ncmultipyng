@@ -290,6 +290,61 @@ class Arguments:
 		return "Arguments=%s" % self._data
 
 #######################################################################       
+# display pad
+#######################################################################
+
+class Display:
+
+	def __init__(self):
+		self._current_height = 1
+		self._current_width = 1
+		self._current_line = 0
+		self._pad = curses.newpad(self._current_height, self._current_width)
+
+	def home(self):
+		pass
+
+	def end(self):
+		pass
+
+	def up(self):
+		pass
+
+	def down(self):
+		pass
+
+	def page_up(self):
+		pass
+
+	def page_down(self):
+		pass
+
+	def get_status(self):
+		pass
+
+	def update(self, pad_height, pad_width):
+		self._current_height = pad_height
+		self._current_width = pad_width
+		self._pad.resize(self._current_height, self._current_width)
+		i = 0
+		for y in xrange(0, self._current_height-1):
+			self._pad.move(y, 0)
+			for x in xrange(0, self._current_width-1):
+				self._pad.addstr(chr(ord('0') + i%10))
+				i += 1
+
+	def refresh(
+			self,
+			screen_top_row, screen_left_col,
+			screen_bottomrow, screen_right_col,
+			):
+		self._pad.refresh(
+				self._current_line, 0,
+				screen_top_row, screen_left_col,
+				screen_bottomrow, screen_right_col
+			)
+
+#######################################################################
 # Interface
 #######################################################################
 
@@ -306,6 +361,8 @@ class Interface:
 		self._setup_colors()
 		# display variable
 		self._program_name = os.path.basename(__file__)
+		# display pad
+		self._display = Display()
 
 	# initialize our colors
 	def _setup_colors(self):
@@ -326,6 +383,18 @@ class Interface:
 			pass
 		elif key == ord('q'):
 			sys.exit(0)
+		if key == curses.KEY_HOME:
+			self._display.home()
+		if key == curses.KEY_END:
+			self._display.end()
+		if key == curses.KEY_UP:
+			self._display.up()
+		if key == curses.KEY_DOWN:
+			self._display.down()
+		if key == curses.KEY_NPAGE:
+			self._display.page_down()
+		if key == curses.KEY_PPAGE:
+			self._display.page_up()
 
 	# decoration
 	def _draw_decoration(self, h, w):
@@ -357,9 +426,13 @@ class Interface:
 		h, w = self._stdscr.getmaxyx()
 		self._handle_input()
 		self._stdscr.clear()
+		# main window
 		self._draw_decoration(h,w)
-		self._display_linear(h, w, hosts)
 		self._stdscr.refresh()
+		# display
+		self._display.update(h-1, w-1)
+		self._display.refresh(1, 1, h-2, w-2)
+		# idle
 		self._sleep()
 
 #######################################################################

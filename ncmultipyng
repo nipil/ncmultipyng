@@ -299,45 +299,61 @@ class Display:
 		self._current_height = 1
 		self._current_width = 1
 		self._current_line = 0
+		self._page_size_hint = 25
 		self._pad = curses.newpad(self._current_height, self._current_width)
 
+	def _clamp_up(self):
+		if self._current_line < 0:
+			self.home()
+
+	def _clamp_down(self):
+		if self._current_line > self._current_height - 1:
+			self.end()
+
 	def home(self):
-		pass
+		self._current_line = 0
 
 	def end(self):
-		pass
+		self._current_line = self._current_height - 1
 
 	def up(self):
-		pass
+		self._current_line -= 1
+		self._clamp_up()
 
 	def down(self):
-		pass
+		self._current_line += 1
+		self._clamp_down()
 
 	def page_up(self):
-		pass
+		self._current_line -= self._page_size_hint
+		self._clamp_up()
 
 	def page_down(self):
-		pass
+		self._current_line += self._page_size_hint
+		self._clamp_down()
 
 	def get_status(self):
-		pass
+		return (self._current_line+1, self._current_height)
 
-	def update(self, pad_height, pad_width):
-		self._current_height = pad_height
+	def draw_linear(self, hosts, pad_width):
+		self._current_height = len(hosts)
 		self._current_width = pad_width
 		self._pad.resize(self._current_height, self._current_width)
-		i = 0
-		for y in xrange(0, self._current_height-1):
-			self._pad.move(y, 0)
-			for x in xrange(0, self._current_width-1):
-				self._pad.addstr(chr(ord('0') + i%10))
-				i += 1
+		line = 0
+		for host in hosts:
+			if line == self._current_height:
+				break
+			self._pad.move(line,0)
+			host.display(self._pad, self._current_width)
+			line = line + 1
 
 	def refresh(
 			self,
 			screen_top_row, screen_left_col,
 			screen_bottomrow, screen_right_col,
 			):
+		# update "visible height", used for page_up/page_down
+		self._page_size_hint = screen_bottomrow - screen_top_row
 		self._pad.refresh(
 				self._current_line, 0,
 				screen_top_row, screen_left_col,
@@ -361,8 +377,11 @@ class Interface:
 		self._setup_colors()
 		# display variable
 		self._program_name = os.path.basename(__file__)
+		# default display mode
+		self._display_mode = "linear"
 		# display pad
 		self._display = Display()
+
 
 	# initialize our colors
 	def _setup_colors(self):
@@ -383,6 +402,8 @@ class Interface:
 			pass
 		elif key == ord('q'):
 			sys.exit(0)
+		elif key == ord('l'):
+			self._display_mode = "linear"
 		if key == curses.KEY_HOME:
 			self._display.home()
 		if key == curses.KEY_END:
@@ -402,20 +423,14 @@ class Interface:
 		self._stdscr.move(0,1)
 		self._stdscr.addstr(self._program_name, curses.A_BOLD)
 		self._stdscr.move(h-1,1)
-		self._stdscr.addstr("q", Interface.style_first_letter | curses.A_BOLD)
+		self._stdscr.addstr(" q", Interface.style_first_letter | curses.A_BOLD)
 		self._stdscr.addstr("uit")
-		winsize = "%s,%s" % (h, w)
+		self._stdscr.addstr(" l", Interface.style_first_letter | curses.A_BOLD)
+		self._stdscr.addstr("inear")
+		self._stdscr.addstr(" ")
+		cl, tl = self._display.get_status()
+		winsize = "%i/%i" % (cl, tl)
 		self._stdscr.addstr(h-1, w-len(winsize)-1, winsize)
-
-	# display screen with one host per line
-	def _display_linear(self, h, w, hosts):
-		line = 1
-		for host in hosts:
-			if line == h - 1:
-				break
-			self._stdscr.move(line,1)
-			host.display(self._stdscr, w - 2)
-			line = line + 1
 
 	# sleep for a while
 	def _sleep(self):
@@ -428,9 +443,10 @@ class Interface:
 		self._stdscr.clear()
 		# main window
 		self._draw_decoration(h,w)
-		self._stdscr.refresh()
+		self._stdscr.nooutrefresh()
 		# display
-		self._display.update(h-1, w-1)
+		if self._display_mode == "linear":
+			self._display.draw_linear(hosts, w-1)
 		self._display.refresh(1, 1, h-2, w-2)
 		# idle
 		self._sleep()

@@ -224,6 +224,9 @@ class Host:
 			room -= 1
 			if room == 0:
 				break;
+		if room > 0:
+			win.addstr(" " * room)
+
 
 #######################################################################
 # Command line arguments
@@ -355,7 +358,7 @@ class Display:
 		line = 0
 		for host in hosts:
 			self._pad.move(line,0)
-			host.display(self._pad, self._current_width)
+			host.display(self._pad, self._current_width - 1)
 			line = line + 1
 
 	def _draw_packed_line(self, line, curbatch):

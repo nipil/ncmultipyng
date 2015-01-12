@@ -204,10 +204,14 @@ class Host:
 
 	# display host, constraining to w chars
 	def display(self, win, w):
+		m = self._get_minimum_display_size()
+		# special override : use minimal size
+		if w == -1:
+			w = m
 		# if not enough space, draw placeholder
-		if w < self._get_minimum_display_size():
-				win.addstr("x" * w)
-				return
+		if w < m:
+			win.addstr("x" * w)
+			return
 		# see how much room we have for samples
 		room = w - len(self.address) - 1
 		win.addstr(self.address)
@@ -301,6 +305,15 @@ class Display:
 		self._current_line = 0
 		self._page_size_hint = 25
 		self._pad = curses.newpad(self._current_height, self._current_width)
+		self.select_mode("packed")
+
+	def _clear(self):
+		self._current_line = 0
+		self._pad.clear()
+
+	def select_mode(self, mode):
+		self._current_mode = mode
+		self._clear()
 
 	def _clamp_up(self):
 		if self._current_line < 0:
@@ -341,11 +354,41 @@ class Display:
 		self._pad.resize(self._current_height, self._current_width)
 		line = 0
 		for host in hosts:
-			if line == self._current_height:
-				break
 			self._pad.move(line,0)
 			host.display(self._pad, self._current_width)
 			line = line + 1
+
+	def _draw_packed_line(self, line, curbatch):
+		self._pad.move(line,0)
+		for chost in curbatch:
+			chost.display(self._pad, -1)
+			self._pad.addstr(" ")
+
+	def draw_packed(self, hosts, pad_width):
+		self._current_height = len(hosts)
+		self._current_width = pad_width
+		self._pad.resize(self._current_height, self._current_width)
+		line = 0
+		curlen = 0
+		curbatch = []
+		for host in hosts:
+			itemlen = host._get_minimum_display_size() + 1
+			if curlen + itemlen >= self._current_width:
+				self._draw_packed_line(line, curbatch)
+				curlen = 0
+				curbatch = []
+				line = line + 1
+			curbatch.append(host)
+			curlen += itemlen
+		self._draw_packed_line(line, curbatch)
+		self._current_height = line
+		self._pad.resize(self._current_height, self._current_width)
+
+	def display(self, hosts, pad_width):
+		if self._current_mode == "linear":
+			self.draw_linear(hosts, pad_width)
+		elif self._current_mode == "packed":
+			self.draw_packed(hosts, pad_width)
 
 	def refresh(
 			self,
@@ -377,10 +420,10 @@ class Interface:
 		self._setup_colors()
 		# display variable
 		self._program_name = os.path.basename(__file__)
-		# default display mode
-		self._display_mode = "linear"
 		# display pad
 		self._display = Display()
+		# default display mode
+		self._display.select_mode("packed")
 
 
 	# initialize our colors
@@ -403,7 +446,9 @@ class Interface:
 		elif key == ord('q'):
 			sys.exit(0)
 		elif key == ord('l'):
-			self._display_mode = "linear"
+			self._display.select_mode("linear")
+		elif key == ord('p'):
+			self._display.select_mode("packed")
 		if key == curses.KEY_HOME:
 			self._display.home()
 		if key == curses.KEY_END:
@@ -427,6 +472,8 @@ class Interface:
 		self._stdscr.addstr("uit")
 		self._stdscr.addstr(" l", Interface.style_first_letter | curses.A_BOLD)
 		self._stdscr.addstr("inear")
+		self._stdscr.addstr(" p", Interface.style_first_letter | curses.A_BOLD)
+		self._stdscr.addstr("acked")
 		self._stdscr.addstr(" ")
 		cl, tl = self._display.get_status()
 		winsize = "%i/%i" % (cl, tl)
@@ -443,10 +490,9 @@ class Interface:
 		self._stdscr.clear()
 		# main window
 		self._draw_decoration(h,w)
-		self._stdscr.nooutrefresh()
+		self._stdscr.noutrefresh()
 		# display
-		if self._display_mode == "linear":
-			self._display.draw_linear(hosts, w-1)
+		self._display.display(hosts, w-1)
 		self._display.refresh(1, 1, h-2, w-2)
 		# idle
 		self._sleep()
